@@ -5,7 +5,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 # If modifying these scopes, delete the file token.json first
-SCOPES = ['https://www.googleapis.com/auth/script.projects']
+SCOPES = [
+    'https://www.googleapis.com/auth/script.projects',
+    'https://www.googleapis.com/auth/script.deployments'
+]
 
 SCRIPT_ID = '1QgOJkAQ8VD9ytHXkR2pF_HxF5zXdu_EVVHjb7mdhgAh1SfVGInucPscM'
 TOKEN_FILE = 'token.json'
