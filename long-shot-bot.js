@@ -1,14 +1,45 @@
 // 請將此處替換為你在 LINE Developers 申請的 Channel Access Token
 const LINE_ACCESS_TOKEN = 'LINE_ACCESS_TOKEN'; 
 
+
 function doPost(e) {
+  let replyToken = null;
+
   try {
-    const json = JSON.parse(e.postData.contents);
-    
-    // 🔍 修正點：LINE 傳入的 events 是陣列，必須加上 [0] 才能抓到正確的 replyToken 與訊息
-    const event = json.events[0];
-    const replyToken = event.replyToken;
+    const rawBody = e && e.postData && e.postData.contents;
+    if (!rawBody) {
+      console.log("Webhook received without a request body");
+      return HtmlService.createHtmlOutput("OK");
+    }
+
+    const json = JSON.parse(rawBody);
+    const events = json.events || [];
+
+    // LINE Webhook 驗證可能傳入空事件陣列
+    if (events.length === 0) {
+      console.log("Webhook verification: empty events");
+      return HtmlService.createHtmlOutput("OK");
+    }
+
+    // 目前沿用原本的單一事件處理邏輯
+    const event = events[0];
+
+    // 忽略非文字訊息或沒有 replyToken 的事件
+    if (
+      event.type !== "message" ||
+      !event.message ||
+      event.message.type !== "text" ||
+      !event.replyToken
+    ) {
+      console.log("Ignored non-text or non-replyable event");
+      return HtmlService.createHtmlOutput("OK");
+    }
+
+    replyToken = event.replyToken;
     const userMessage = event.message.text.trim();
+
+    // 從這裡開始，保留原本四種功能的程式碼
+
     
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     let replyText = "";
@@ -249,44 +280,55 @@ function doPost(e) {
 
     sendLineReply(replyToken, replyText);
     
-   } catch(err) {
-     // 發送錯誤訊息給使用者，同時記錄日誌
-     Logger.log("=== ERROR IN doPost ===");
-     Logger.log(err.toString());
-     try {
-       sendLineReply(replyToken, "❌ 發生系統錯誤：" + err.toString().substring(0, 100));
-     } catch(sendErr) {
-       Logger.log("Failed to send error message: " + sendErr.toString());
-     }
-   }
+
+  } catch (err) {
+    console.error("=== ERROR IN doPost ===");
+    console.error(err.stack || err);
+
+    // 只有在取得有效 replyToken 時，才嘗試傳送錯誤通知
+    if (replyToken) {
+      try {
+        sendLineReply(
+          replyToken,
+          "❌ 系統處理失敗，請稍後再試。"
+        );
+      } catch (sendErr) {
+        console.error("Failed to send error reply: " + sendErr);
+      }
+    }
+  }
+
+  // 使用先前已驗證成功的回應方式
+  return HtmlService.createHtmlOutput("OK");
 }
 
+
+
 function sendLineReply(replyToken, replyText) {
-  Logger.log("🚀 sendLineReply CALLED");
-  Logger.log(`replyToken length: ${replyToken.length}`);
-  Logger.log(`replyText preview: ${replyText.substring(0, 50)}`);
-  
-  const url = 'https://api.line.me/v2/bot/message/reply';
-  const options = {
-    'method': 'post',
-    'headers': {
-       'Content-Type': 'application/json',
-       'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN
-       },
-     'payload': JSON.stringify({
-        'replyToken': replyToken,
-        'messages': [{'type': 'text', 'text': replyText}]
-        })
-      };
-    
-  Logger.log("🌐 Sending to LINE API...");
-  
-  var response;
-  try {
-     response = UrlFetchApp.fetch(url, options);
-     Logger.log(`✅ Response status: ${response.getResponseCode()}`);
-     Logger.log(`Response body: ${response.getContentText()}`);
-  } catch(fetchErr) {
-     Logger.log(`❌ fetch error: ${fetchErr.toString()}`);
+  if (!replyToken) {
+    console.error("sendLineReply: missing replyToken");
+    return;
   }
+
+  const url = "https://api.line.me/v2/bot/message/reply";
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    headers: {
+      Authorization: "Bearer " + LINE_ACCESS_TOKEN
+    },
+    payload: JSON.stringify({
+      replyToken: replyToken,
+      messages: [{ type: "text", text: replyText }]
+    }),
+    muteHttpExceptions: true
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  const status = response.getResponseCode();
+  const responseBody = response.getContentText();
+
+  console.log("LINE Reply API status: " + status);
+  console.log("LINE Reply API body: " + responseBody);
 }
