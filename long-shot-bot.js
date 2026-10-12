@@ -249,25 +249,44 @@ function doPost(e) {
 
     sendLineReply(replyToken, replyText);
     
-  } catch(err) {
-    // 萬一程式出錯，可以從 Apps Script 後台的「執行項目」查看 log 紀錄
-    Logger.log(err.toString());
-  }
+   } catch(err) {
+     // 發送錯誤訊息給使用者，同時記錄日誌
+     Logger.log("=== ERROR IN doPost ===");
+     Logger.log(err.toString());
+     try {
+       sendLineReply(replyToken, "❌ 發生系統錯誤：" + err.toString().substring(0, 100));
+     } catch(sendErr) {
+       Logger.log("Failed to send error message: " + sendErr.toString());
+     }
+   }
 }
 
 function sendLineReply(replyToken, replyText) {
+  Logger.log("🚀 sendLineReply CALLED");
+  Logger.log(`replyToken length: ${replyToken.length}`);
+  Logger.log(`replyText preview: ${replyText.substring(0, 50)}`);
+  
   const url = 'https://api.line.me/v2/bot/message/reply';
   const options = {
     'method': 'post',
     'headers': {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN
-    },
-    'payload': JSON.stringify({
-      'replyToken': replyToken,
-      'messages': [{ 'type': 'text', 'text': replyText }]
-    })
-  };
-  Logger.log("即將回傳訊息，Token長度為: " + LINE_ACCESS_TOKEN.length);
-  UrlFetchApp.fetch(url, options);
+       'Content-Type': 'application/json',
+       'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN
+       },
+     'payload': JSON.stringify({
+        'replyToken': replyToken,
+        'messages': [{'type': 'text', 'text': replyText}]
+        })
+      };
+    
+  Logger.log("🌐 Sending to LINE API...");
+  
+  var response;
+  try {
+     response = UrlFetchApp.fetch(url, options);
+     Logger.log(`✅ Response status: ${response.getResponseCode()}`);
+     Logger.log(`Response body: ${response.getContentText()}`);
+  } catch(fetchErr) {
+     Logger.log(`❌ fetch error: ${fetchErr.toString()}`);
+  }
 }
