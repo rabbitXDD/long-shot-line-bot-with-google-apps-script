@@ -94,8 +94,8 @@ function doPost(e) {
     }
     
     // 處理功能 3：貼回紀錄資料（格式：姓名：O/X/-）
-    // 處理功能 1：【查詢當週戰績】格式範例：「李明緯-1」
-    else if (userMessage.includes("-")) {
+    // 處理功能 1：【查詢當週戰績】格式範例：「李明緯-1」 (嚴格限制結尾為數字，避免球員名帶有 '-' 誤判)
+    else if (/^.+- \d+$/.test(userMessage) || /^.+-[-]?\d+$/.test(userMessage)) {
       const sheet = spreadsheet.getSheetByName("每局對戰紀錄");
       const data = sheet.getDataRange().getValues();
       let found = false;
