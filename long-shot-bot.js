@@ -305,30 +305,31 @@ function doPost(e) {
 
 
 function sendLineReply(replyToken, replyText) {
-  if (!replyToken) {
-    console.error("sendLineReply: missing replyToken");
-    return;
-  }
-
-  const url = "https://api.line.me/v2/bot/message/reply";
-
+  Logger.log("🚀 sendLineReply CALLED");
+  Logger.log(`replyToken length: ${replyToken.length}`);
+  Logger.log(`replyText preview: ${replyText.substring(0, 50)}`);
+  
+  const url = 'https://api.line.me/v2/bot/message/reply';
   const options = {
-    method: "post",
-    contentType: "application/json",
-    headers: {
-      Authorization: "Bearer " + LINE_ACCESS_TOKEN
-    },
-    payload: JSON.stringify({
-      replyToken: replyToken,
-      messages: [{ type: "text", text: replyText }]
-    }),
-    muteHttpExceptions: true
-  };
-
-  const response = UrlFetchApp.fetch(url, options);
-  const status = response.getResponseCode();
-  const responseBody = response.getContentText();
-
-  console.log("LINE Reply API status: " + status);
-  console.log("LINE Reply API body: " + responseBody);
+    'method': 'post',
+    'headers': {
+       'Content-Type': 'application/json',
+       'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN
+      },
+     'payload': JSON.stringify({
+        'replyToken': replyToken,
+        'messages': [{'type': 'text', 'text': replyText}]
+        })
+      };
+    
+  Logger.log("🌐 Sending to LINE API...");
+  
+  var response;
+  try {
+     response = UrlFetchApp.fetch(url, options);
+     Logger.log(`✅ Response status: ${response.getResponseCode()}`);
+     Logger.log(`Response body: ${response.getContentText()}`);
+  } catch(fetchErr) {
+     Logger.log(`❌ fetch error: ${fetchErr.toString()}`);
+  }
 }
