@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Bot Test Page - Full Features 1-4</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.5; }
+        textarea { width: 450px; height: 100px; padding: 10px; font-size: 15px; }
+        button { padding: 8px 16px; margin: 5px 5px; font-size: 14px; cursor: pointer; border-radius: 4px; border: none; background: #4CAF50; color: white; }
+        button:hover { background: #45a049; }
+        .btn-reset { background: #ff9800 !important; }
+        pre { 
+            background: #f5f5f5; 
+            padding: 15px; 
+            margin-top: 15px; 
+            border-radius: 5px;
+            white-space: pre-wrap;
+           }
+        .section { background: #eef2f3; padding: 10px; margin-bottom: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>🤖 龍蝦排球 Bot - 完整功能測試 (1 ~ 4)</h1>
+    
+    <div class="section">
+        <p><strong>輸入測試指令：</strong></p>
+        <textarea id="testInput" placeholder="輸入指令，例如：李明緯-1、紀錄 1-1 25:14、李明緯-test：O、排行"></textarea><br>
+        <button onclick="runTest()">執行測試</button>
+        <button class="btn-reset" onclick="resetFlow()">🧹 重置狀態</button>
+    </div>
+    
+    <p><strong>Bot 回覆結果：</strong></p>
+    <pre id="resultOutput">請輸入指令或點擊下方測試按鈕...</pre>
+
+    <hr>
+    <h3>🧪 快速測試四大功能：</h3>
+    <div>
+        <button onclick="testFeature1()">1️⃣ 查詢戰績 (李明緯-1)</button>
+        <button onclick="testFeature2()">2️⃣ 開始紀錄 (紀錄 1-1 25:14)</button>
+        <button onclick="testFeature3()">3️⃣ 回填成績 (含減號名字李明緯-test：O)</button>
+        <button onclick="testFeature4()">4️⃣ 查詢排行 (排行)</button>
+    </div>
+
+     <script>
+        // Mock State
+        let pendingRecordState = null;
+
+        // Mock Database
+        const dbRecords = [
+            { query: "李明緯-1", name: "李明緯", round: 1, date: "2024-10-14", win: 1, lose: 0, plusMinus: 11, score: "25:14" },
+            { query: "李明緯-1", name: "李明緯", round: 1, date: "2024-10-14", win: 1, lose: 0, plusMinus: 7, score: "25:18" }
+        ];
+
+        const dbRanking = [
+            { rank: 1, name: "齊蹦", score: 40, lose: 0, diff: "+45", tier: "Tier 1" },
+            { rank: 2, name: "李明緯-test", score: 35, lose: 5, diff: "+38", tier: "Tier 2" },
+            { rank: 3, name: "張三", score: 20, lose: 7, diff: "-5", tier: "Tier 3" }
+        ];
+
+        function runTest() {
+            const input = document.getElementById("testInput").value;
+            const trimmed = input.trim();
+            if (!trimmed) {
+                document.getElementById("resultOutput").textContent = "⚠️ 請輸入測試指令。";
+                return;
+            }
+
+            let replyText = "";
+
+            // --- 功能 2：紀錄成績 (最高優先級，避免帶有空格或數字被誤判) ---
+            if (trimmed.startsWith("紀錄 ")) {
+                const parts = trimmed.substring(3).trim().split(" ");
+                if (parts.length !== 2) {
+                    replyText = "❌ 格式錯誤！請使用：紀錄 <場次>-<局數> <勝方得分>:<敗方得分>\n例如：紀錄 1-1 25:14";
+                } else {
+                    pendingRecordState = { round: 1, set: 1, winnerScore: 25, loserScore: 14, diff: 11 };
+                    replyText = "📊 第1場第1局 - 比數 25:14\n請填入球員 O/X/-：\n\n李明緯-test：____\n齊蹦：____\n張三：____";
+                }
+            } 
+            // --- 功能 3：回填成績 (第二優先，只要包含冒號 '：' 就判定為回填，保護含 '-' 的球員名稱) ---
+            else if (trimmed.includes("：")) {
+                if (!pendingRecordState) {
+                    replyText = "❌ 沒有待處理的記錄。請先使用「紀錄 <場次>-<局數> <比數>」指令。";
+                } else {
+                    replyText = "✅ 記錄已成功保存！\n🆕 新增：3 筆\n🔄 更新：0 筆\n📊 排行榜將在幾秒內自動更新。";
+                }
+            } 
+            // --- 功能 4：查詢排行 ---
+            else if (trimmed === "排行" || trimmed === "查詢排行") {
+                replyText = "🏆 【龍蝦季賽最新排行榜】 🏆\n";
+                dbRanking.forEach(r => {
+                    replyText += `\n${r.rank}. ${r.name} ｜ 積分: ${r.score} ｜ 敗場: ${r.lose} ｜ 得失差: ${r.diff} ｜ ${r.tier}`;
+                });
+            } 
+            // --- 功能 1：查詢戰績 (最後優先，透過正則確保是「姓名-場次」格式) ---
+            else if (/^.+- \d+$/.test(trimmed) || /^.+-[-]?\d+$/.test(trimmed)) {
+                const parts = trimmed.split("-");
+                replyText = `🏐 ${parts[0]} 第 ${parts[1]} 場\n`;
+                replyText += "📅 比賽日期：2024-10-14\n";
+                replyText += "🟢 勝局：2\n🔴 敗局：0\n📊 正負值：+18\n🎾 原始比數：25:14, 25:18\n當週獲得積分：2 分！";
+            } else {
+                replyText = "🤖 歡迎使用龍蝦季賽查詢機器人！\n\n💡 查詢指令說明：\n1. 輸入【排行】\n2. 輸入【姓名-場次】（例如：李明緯-1）\n3. 輸入【紀錄 <場次>-<局數> <比數>】";
+            }
+
+            document.getElementById("resultOutput").textContent = replyText;
+        }
+
+        // Test Helpers
+        function testFeature1() {
+            document.getElementById("testInput").value = "李明緯-1";
+            runTest();
+        }
+
+        function testFeature2() {
+            document.getElementById("testInput").value = "紀錄 1-1 25:14";
+            runTest();
+        }
+
+        function testFeature3() {
+            document.getElementById("testInput").value = "李明緯-test：O\n齊蹦：X\n張三：O";
+            runTest();
+        }
+
+        function testFeature4() {
+            document.getElementById("testInput").value = "排行";
+            runTest();
+        }
+
+        function resetFlow() {
+            pendingRecordState = null;
+            document.getElementById("testInput").value = "";
+            document.getElementById("resultOutput").textContent = "🧹 狀態已重置！";
+        }
+     </script>
+</body>
+</html>

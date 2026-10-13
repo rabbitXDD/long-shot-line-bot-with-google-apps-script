@@ -44,47 +44,7 @@ function doPost(e) {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     let replyText = "";
 
-    // 處理功能 1：【查詢當週戰績】格式範例：「李明緯-1」
-    if (userMessage.includes("-")) {
-      const sheet = spreadsheet.getSheetByName("每局對戰紀錄");
-      const data = sheet.getDataRange().getValues();
-      let found = false;
-      let totalWin = 0;
-      let totalLose = 0;
-      let plusMinus = 0;
-      let lastScore = "";
-      let lastDate = "";
-
-      // 欄位索引：A場次(0) B比賽日期(1) C局數(2) D球員ID(3) E姓名(4) F勝局(5) G正負值(6) H原始比數(7) I查詢字串(8)
-      for (let i = 1; i < data.length; i++) {
-        if (data[i][8] == userMessage) { // I 欄 (第9欄，索引為8) - 查詢字串
-          found = true;
-          totalWin += Number(data[i][5]);  // F 欄 (勝局)
-          totalLose += (Number(data[i][5]) === 0) ? 1 : 0; // 敗局 = 勝局為0的場次
-          plusMinus += Number(data[i][6]); // G 欄 (正負值)
-          lastScore = data[i][7];          // H 欄 (原始比數)
-          lastDate = data[i][1];           // B 欄 (比賽日期)
-        }
-      }
-
-      if (found) {
-        const parts = userMessage.split("-");
-        replyText = `🏐 ${parts[0]} 第 ${parts[1]} 場\n`;
-        if (lastDate) {
-          replyText += `📅 比賽日期：${lastDate}\n`;
-        }
-        replyText += `🟢 勝局：${totalWin}\n🔴 敗局：${totalLose}\n📊 正負值：${plusMinus >= 0 ? "+" : ""}${plusMinus}\n`;
-        if (lastScore) {
-          replyText += `🎾 原始比數：${lastScore}\n`;
-        }
-        replyText += `當週獲得積分：${totalWin} 分！`;
-      } else {
-        replyText = "❌ 找不到該場次戰績，請確認格式是否正確（例如：李明緯-1）或主辦方尚未輸入數據。";
-      }
-    }
-    
-    // 處理功能 2：【紀錄成績】格式：「紀錄 1-1 25:14」
-    else if (userMessage.startsWith("紀錄 ")) {
+    if (userMessage.startsWith("紀錄 ")) {
       const parts = userMessage.substring(3).trim().split(" ");
       if (parts.length !== 2) {
         replyText = "❌ 格式錯誤！請使用：紀錄 <場次>-<局數> <勝方得分>:<敗方得分>\n例如：紀錄 1-1 25:14";
@@ -134,6 +94,46 @@ function doPost(e) {
     }
     
     // 處理功能 3：貼回紀錄資料（格式：姓名：O/X/-）
+    // 處理功能 1：【查詢當週戰績】格式範例：「李明緯-1」
+    else if (userMessage.includes("-")) {
+      const sheet = spreadsheet.getSheetByName("每局對戰紀錄");
+      const data = sheet.getDataRange().getValues();
+      let found = false;
+      let totalWin = 0;
+      let totalLose = 0;
+      let plusMinus = 0;
+      let lastScore = "";
+      let lastDate = "";
+
+      // 欄位索引：A場次(0) B比賽日期(1) C局數(2) D球員ID(3) E姓名(4) F勝局(5) G正負值(6) H原始比數(7) I查詢字串(8)
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][8] == userMessage) { // I 欄 (第9欄，索引為8) - 查詢字串
+          found = true;
+          totalWin += Number(data[i][5]);  // F 欄 (勝局)
+          totalLose += (Number(data[i][5]) === 0) ? 1 : 0; // 敗局 = 勝局為0的場次
+          plusMinus += Number(data[i][6]); // G 欄 (正負值)
+          lastScore = data[i][7];          // H 欄 (原始比數)
+          lastDate = data[i][1];           // B 欄 (比賽日期)
+        }
+      }
+
+      if (found) {
+        const parts = userMessage.split("-");
+        replyText = `🏐 ${parts[0]} 第 ${parts[1]} 場\n`;
+        if (lastDate) {
+          replyText += `📅 比賽日期：${lastDate}\n`;
+        }
+        replyText += `🟢 勝局：${totalWin}\n🔴 敗局：${totalLose}\n📊 正負值：${plusMinus >= 0 ? "+" : ""}${plusMinus}\n`;
+        if (lastScore) {
+          replyText += `🎾 原始比數：${lastScore}\n`;
+        }
+        replyText += `當週獲得積分：${totalWin} 分！`;
+      } else {
+        replyText = "❌ 找不到該場次戰績，請確認格式是否正確（例如：李明緯-1）或主辦方尚未輸入數據。";
+      }
+    }
+    
+    // 處理功能 2：【紀錄成績】格式：「紀錄 1-1 25:14」
     else if (userMessage.includes("：")) {
       // 檢查是否有待處理的記錄
       const props = PropertiesService.getScriptProperties();
