@@ -1,5 +1,5 @@
 // 請將此處替換為你在 LINE Developers 申請的 Channel Access Token
-const LINE_ACCESS_TOKEN = 'LINE_ACCESS_TOKEN'; 
+const LINE_ACCESS_TOKEN = 'w4zfK7E0Re6QfiGPPF+YOlZx5b7TMJLN5sM5Ezf39q04uoRbHBaKUkQobpAZ73eAD43D690f3OrqEfuDlfnABkElb6eMvRHqffkN4LiZyu7DMKVlOb9xIX1b/YZp4n0pUY+4ADH3Xi56sGGzDMcWRQdB04t89/1O/w1cDnyilFU='; 
 
 
 function doPost(e) {
