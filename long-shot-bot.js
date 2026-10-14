@@ -366,3 +366,9 @@ function sendLineReply(replyToken, replyText) {
      Logger.log(`❌ fetch error: ${fetchErr.toString()}`);
   }
 }
+
+function triggerAuth() {
+  // 🚀 強制同時觸發試算表與 LINE 外部通訊的權限視窗
+  SpreadsheetApp.getActiveSpreadsheet();
+  UrlFetchApp.fetch("https://line.me", { 'method': 'post', 'muteHttpExceptions': true });
+}
