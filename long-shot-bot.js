@@ -185,8 +185,17 @@ function doPost(e) {
           }
           
           // 檢查每筆記錄
-          let updatedCount = 0;
+          // 建立已存在記錄的快速索引（key = 場次-局數-球員ID → dataRow）
+          const existingRowMap = {};
+          for (let r = 1; r < recordData.length; r++) {
+            const k = recordData[r][0] + "-" + recordData[r][2] + "-" + recordData[r][3];
+            if (existingRowMap[k] === undefined) {
+              existingRowMap[k] = r;
+            }
+          }
           let addedCount = 0;
+          let updatedCount = 0;
+          let nextRowNum = recordData.length + 1;
           const errors = [];
           
           for (const record of records) {
@@ -201,17 +210,10 @@ function doPost(e) {
             const plusMinus = (record.mark === "O") ? diff : (record.mark === "X") ? -diff : 0;
             
             // 檢查是否已存在該場次該局該球員的記錄
-            let foundRow = -1;
-            for (let r = 1; r < recordData.length; r++) {
-              if (recordData[r][0] == roundNum &&   // A 欄 場次
-                  recordData[r][2] == setNum &&     // C 欄 局數
-                  recordData[r][3] == playerId) {   // D 欄 球員ID
-                foundRow = r;
-                break;
-              }
-            }
+            const key = roundNum + "-" + setNum + "-" + playerId;
+            const foundRow = existingRowMap[key];
             
-            if (foundRow !== -1) {
+            if (foundRow !== undefined) {
               // 更新現有記錄
               recordSheet.getRange(foundRow + 1, 2).setValue(gameDate); // B 欄 比賽日期
               recordSheet.getRange(foundRow + 1, 6).setValue(win);      // F 欄 勝局
@@ -221,7 +223,7 @@ function doPost(e) {
               updatedCount++;
             } else {
               // 新增記錄
-              const newRow = recordData.length + 1;
+              const newRow = nextRowNum++;
               recordSheet.getRange(newRow, 1).setValue(roundNum); // A 欄 場次
               recordSheet.getRange(newRow, 2).setValue(gameDate); // B 欄 比賽日期
               recordSheet.getRange(newRow, 3).setValue(setNum);   // C 欄 局數
@@ -231,6 +233,7 @@ function doPost(e) {
               recordSheet.getRange(newRow, 7).setValue(plusMinus); // G 欄 正負值
               recordSheet.getRange(newRow, 8).setValue(`${winnerScore}:${loserScore}`); // H 欄 原始比數
               recordSheet.getRange(newRow, 9).setFormula(`=E${newRow}&"-"&A${newRow}`); // I 欄 查詢字串
+              existingRowMap[key] = newRow - 1; // 防止同批次新增
               addedCount++;
             }
           }
@@ -255,21 +258,51 @@ function doPost(e) {
     // 處理功能 4：【查詢排行】
     else if (userMessage === "查詢排行" || userMessage === "排行") {
       const sheet = spreadsheet.getSheetByName("季賽總排行榜");
-      const data = sheet.getDataRange().getValues();
+      let data = sheet.getDataRange().getValues();
+      
+      // 初始化出席次數欄位 (在 E 欄和 F 欄中間，即插入到 F 欄)
+      if (data[0] && data[0][5] !== "出席次數") {
+        sheet.insertColumnAfter(5);
+        sheet.getRange(1, 6).setValue("出席次數");
+        for (let i = 2; i <= data.length; i++) {
+          if (data[i-1][1]) {
+            sheet.getRange(i, 6).setFormula(`=COUNTUNIQUEIFS(每局對戰紀錄!$B:$B, 每局對戰紀錄!$D:$D, B${i})`);
+          }
+        }
+        SpreadsheetApp.flush();
+        data = sheet.getDataRange().getValues();
+      }
+
       replyText = "🏆 【龍蝦 2026 10-12月季打 最新排行榜】 🏆\n";
       
-      // 撈取前 12 名球員資料
-      for (let i = 1; i <= 12; i++) {
-        if (data[i]) {
-          const rank = data[i][0];  // A 欄：排名
-          const id = data[i][1];    // B 欄：球員ID
-          const name = data[i][2];  // C 欄：姓名
-          const score = data[i][3]; // D 欄：總積分
-          const lose = data[i][4];  // E 欄：總敗場
-          const diff = data[i][5];  // F 欄：得失分差
-          const tier = data[i][6];  // G 欄：當前 Tier
-          replyText += `\n${rank}. ${name} ｜ 積分: ${score} ｜ 勝場: ${score} ｜ 敗場: ${lose} ｜ 得失差: ${diff} ｜ ${tier}`;
+      const players = [];
+      for (let i = 1; i < data.length; i++) {
+        if (data[i] && data[i][1]) {
+          players.push({
+            rank: Number(data[i][0]) || 0,
+            id: data[i][1],
+            name: data[i][2],
+            score: Number(data[i][3]) || 0,
+            lose: Number(data[i][4]) || 0,
+            attendance: Number(data[i][5]) || 0,
+            diff: Number(data[i][6]) || 0,
+            tier: data[i][7]
+          });
         }
+      }
+      
+      // 排序順序: 積分 (大到小) -> 出席 (大到小) -> 正負值 (大到小)
+      players.sort((a, b) => b.score - a.score || b.attendance - a.attendance || b.diff - a.diff);
+      
+      // 更新排名編號
+      for (let i = 0; i < players.length; i++) {
+        players[i].rank = i + 1;
+        sheet.getRange(i + 2, 1).setValue(players[i].rank);
+      }
+      
+      for (let i = 0; i < Math.min(players.length, 12); i++) {
+        const p = players[i];
+        replyText += `\n${p.rank}. ${p.name} ｜ 出席: ${p.attendance} ｜ 積分: ${p.score} ｜ 正負值: ${p.diff >= 0 ? "+" : ""}${p.diff}`;
       }
     } 
     
