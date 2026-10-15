@@ -10,6 +10,7 @@ TOKEN_FILE = 'token.json'
 CLIENT_SECRET_FILE = 'agent_secret_oauth.json'
 SCOPES = [
     'https://www.googleapis.com/auth/script.projects',
+    'https://www.googleapis.com/auth/script.deployments',
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive'
 ]

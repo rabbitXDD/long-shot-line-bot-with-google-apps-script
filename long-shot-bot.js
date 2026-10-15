@@ -302,7 +302,10 @@ function doPost(e) {
       
       for (let i = 0; i < Math.min(players.length, 12); i++) {
         const p = players[i];
-        replyText += `\n${p.rank}. ${p.name} ｜ 出席: ${p.attendance} ｜ 積分: ${p.score} ｜ 正負值: ${p.diff >= 0 ? "+" : ""}${p.diff}`;
+        // 幫前三名加上金銀銅牌獎勵感，其餘用排球圖標
+        let medal = p.rank === 1 ? "🥇" : p.rank === 2 ? "🥈" : p.rank === 3 ? "🥉" : "🏐";
+        
+        replyText += `\n${medal} 第 ${p.rank} 名：${p.name}\n   🔥 積分：${p.score} 分 ｜ 🏃‍♂️ 出席：${p.attendance} 次\n   📊 正負值：${p.diff >= 0 ? "+" : ""}${p.diff}\n`;
       }
     } 
     
