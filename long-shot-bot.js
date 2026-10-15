@@ -4,6 +4,7 @@ const LINE_ACCESS_TOKEN = 'LINE_ACCESS_TOKEN';
 
 function doPost(e) {
   let replyToken = null;
+  let tokenConsumed = false;
 
   try {
     const rawBody = e && e.postData && e.postData.contents;
@@ -24,6 +25,15 @@ function doPost(e) {
     // 目前沿用原本的單一事件處理邏輯
     const event = events[0];
 
+    // Idempotency dedup — 防止 LINE 網路重試導致重複處理
+    const cache = CacheService.getScriptCache();
+    const dedupKey = 'webhook_' + event.timestamp + '_' + (event.source && event.source.userId || 'unknown');
+    if (cache.get(dedupKey) === 'processed') {
+      console.log('Duplicate event detected, skipping: ' + dedupKey);
+      return HtmlService.createHtmlOutput('OK');
+    }
+    cache.put(dedupKey, 'processed', 300);
+
     // 忽略非文字訊息或沒有 replyToken 的事件
     if (
       event.type !== "message" ||
@@ -40,9 +50,19 @@ function doPost(e) {
 
     // 從這裡開始，保留原本四種功能的程式碼
 
-    
-    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     let replyText = "";
+
+    // LockService mutex — 防止並發寫入試算表造成 Race Condition
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(5000)) {
+      replyText = "⏳ 系統正忙，請 3 秒後再試。";
+      tokenConsumed = true;
+      sendLineReply(replyToken, replyText);
+      return HtmlService.createHtmlOutput('OK');
+    }
+
+    try {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 
     if (userMessage.startsWith("紀錄 ")) {
       const parts = userMessage.substring(3).trim().split(" ");
@@ -314,6 +334,11 @@ function doPost(e) {
       replyText = "🤖 歡迎使用龍蝦季賽查詢機器人！\n\n💡 查詢指令說明：\n1. 輸入【排行】: 查看目前 12 人的完整 Tier 排行榜。\n2. 輸入【姓名-場次】: 查詢當週得失分戰績。（例如：李明緯-1）\n3. 輸入【紀錄 <場次>-<局數> <比數>】: 開始記錄一局比賽。（例如：紀錄 1-1 25:14）\n   系統會回傳 template，請填入 O/X/- 後貼回。";
     }
 
+    } finally {
+      lock.releaseLock();
+    }
+
+    tokenConsumed = true;
     sendLineReply(replyToken, replyText);
     
 
@@ -321,9 +346,10 @@ function doPost(e) {
     console.error("=== ERROR IN doPost ===");
     console.error(err.stack || err);
 
-    // 只有在取得有效 replyToken 時，才嘗試傳送錯誤通知
-    if (replyToken) {
+    // 只有在取得有效 replyToken 且尚未消費時，才嘗試傳送錯誤通知
+    if (replyToken && !tokenConsumed) {
       try {
+        tokenConsumed = true;
         sendLineReply(
           replyToken,
           "❌ 系統處理失敗，請稍後再試。"
@@ -348,6 +374,7 @@ function sendLineReply(replyToken, replyText) {
   const url = 'https://api.line.me/v2/bot/message/reply';
   const options = {
     'method': 'post',
+    'muteHttpExceptions': true,
     'headers': {
        'Content-Type': 'application/json',
        'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN
