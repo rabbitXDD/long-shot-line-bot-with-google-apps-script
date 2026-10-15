@@ -1,4 +1,5 @@
 import os
+import json
 import google.oauth2.credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -7,6 +8,15 @@ from googleapiclient.discovery import build
 SCRIPT_ID = '1QgOJkAQ8VD9ytHXkR2pF_HxF5zXdu_EVVHjb7mdhgAh1SfVGInucPscM'
 # 確保使用完整的寫入 Scope，而非唯讀 Scope
 SCOPES = ['https://www.googleapis.com/auth/script.projects']
+
+# 讀取 token.json 中的 line_access_token，稍後寫回 OAuth 時保留
+line_access_token = None
+if os.path.exists('token.json'):
+    with open('token.json', 'r') as _f:
+        try:
+            line_access_token = json.load(_f).get('line_access_token')
+        except json.JSONDecodeError:
+            pass
 
 creds = None
 # token.json 會在第一次瀏覽器登入成功後自動產生地端快取
@@ -21,9 +31,12 @@ if not creds or not creds.valid:
         # 讀取你在 GCP 建立的「桌面應用程式」OAuth 憑證
         flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
         creds = flow.run_local_server(port=0)
-    # 儲存新取得的 Token，之後執行就不再需要手動跳瀏覽器
+    # 儲存新取得的 Token，保留 line_access_token 欄位
+    _token_data = json.loads(creds.to_json())
+    if line_access_token:
+        _token_data['line_access_token'] = line_access_token
     with open('token.json', 'w') as token:
-        token.write(creds.to_json())
+        token.write(json.dumps(_token_data))
 
 service = build('script', 'v1', credentials=creds)
 
@@ -31,8 +44,16 @@ service = build('script', 'v1', credentials=creds)
 with open('long-shot-bot.js', 'r', encoding='utf-8') as f:
     local_code = f.read()
 
-cloud_token = 'gzeqISKMk/oWJo0doDdcWtMdlc03GNA6qunBM4B2cCnLcKqnx+aqFUs1xOywKFZWD43D690f3OrqEfuDlfnABkElb6eMvRHqffkN4LiZyu4saAnf+i+04zGrbM/1SIrbj50DRApqyZ1UAaqi3cfhZAdB04t89/1O/w1cDnyilFU='
-local_code = local_code.replace("const LINE_ACCESS_TOKEN = 'LINE_ACCESS_TOKEN';", f"const LINE_ACCESS_TOKEN = '{cloud_token}';")
+if not line_access_token:
+    raise ValueError(
+        "token.json 缺少 'line_access_token' 欄位。"
+        "請手動填入真實 LINE Channel Access Token 後再執行。"
+    )
+
+local_code = local_code.replace(
+    "const LINE_ACCESS_TOKEN = 'LINE_ACCESS_TOKEN';",
+    f"const LINE_ACCESS_TOKEN = '{line_access_token}';"
+)
 
 request_body = {
     'files': [
