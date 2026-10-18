@@ -43,8 +43,9 @@ function doPost(e) {
     const event = events[0];
 
     // Idempotency dedup — 防止 LINE 網路重試導致重複處理
+    const userId = event.source && event.source.userId || 'unknown';
     const cache = CacheService.getScriptCache();
-    const dedupKey = 'webhook_' + event.timestamp + '_' + (event.source && event.source.userId || 'unknown');
+    const dedupKey = 'webhook_' + event.timestamp + '_' + userId;
     if (cache.get(dedupKey) === 'processed') {
       console.log('Duplicate event detected, skipping: ' + dedupKey);
       return HtmlService.createHtmlOutput('OK');
@@ -100,9 +101,9 @@ function doPost(e) {
           // 計算正負值
           const diff = Math.abs(winnerScore - loserScore);
           
-          // 存狀態
+          // 存狀態（Task 6: 以 userId 鍵值隔離，避免多用戶狀態互相覆蓋）
           const props = PropertiesService.getScriptProperties();
-          props.setProperty("pendingRecord", JSON.stringify({
+          props.setProperty("pendingRecord_" + userId, JSON.stringify({
             round: roundNum,
             set: setNum,
             winnerScore,
@@ -172,9 +173,9 @@ function doPost(e) {
     
     // 處理功能 2：【紀錄成績】格式：「紀錄 1-1 25:14」
     else if (userMessage.includes("：")) {
-      // 檢查是否有待處理的記錄
+      // 檢查是否有待處理的記錄（Task 6: 以 userId 鍵值隔離）
       const props = PropertiesService.getScriptProperties();
-      const pendingJson = props.getProperty("pendingRecord");
+      const pendingJson = props.getProperty("pendingRecord_" + userId);
       
       if (!pendingJson) {
         replyText = "❌ 沒有待處理的記錄。請先使用「紀錄 <場次>-<局數> <比數>」指令。";
@@ -275,8 +276,8 @@ function doPost(e) {
             }
           }
           
-          // 清除待處理狀態
-          props.deleteProperty("pendingRecord");
+          // 清除待處理狀態（Task 6: 以 userId 鍵值隔離）
+          props.deleteProperty("pendingRecord_" + userId);
           
           // 建立回覆訊息
           replyText = `✅ 第${roundNum}場第${setNum}局記錄已保存！\n`;

@@ -45,6 +45,7 @@
 * **步驟**:
   1. 將 ScriptProperties 的鍵名改為 `pendingRecord_${userId}`。
 * **優先級**: High
+* **狀態**: ✅ 已完成（commit 2481ae2 之后的 Task 6 commit）
 
 ### Task 7: 強化 ReplyToken 生命週期管理 (對應 G7)
 * **目標**: 避免重複使用 `replyToken` 或遺漏多事件。
