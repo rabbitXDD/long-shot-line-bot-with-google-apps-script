@@ -1,5 +1,14 @@
 // 實時 Token 由 app_scripts.py 在部署前從 token.json 讀取並替換此處
 const LINE_ACCESS_TOKEN = 'LINE_ACCESS_TOKEN';
+const LINE_CHANNEL_SECRET = 'LINE_CHANNEL_SECRET';
+
+
+function verifyLineSignature(rawBody, signature, secret) {
+  if (!signature || !secret) return false;
+  const hash = Utilities.computeHmacSha256Signature(rawBody, secret);
+  const expected = Utilities.base64Encode(hash);
+  return expected === signature;
+}
 
 
 function doPost(e) {
@@ -11,6 +20,14 @@ function doPost(e) {
     if (!rawBody) {
       console.log("Webhook received without a request body");
       return HtmlService.createHtmlOutput("OK");
+    }
+
+    // Task 2: Verify LINE Webhook signature (HMAC-SHA256) — Spec §2.2
+    const headers = e.headers || {};
+    const signature = headers['x-line-signature'] || headers['X-Line-Signature'];
+    if (!verifyLineSignature(rawBody, signature, LINE_CHANNEL_SECRET)) {
+      console.error("Invalid LINE signature, rejecting request");
+      return ContentService.createTextOutput("Unauthorized").setStatusCode(401);
     }
 
     const json = JSON.parse(rawBody);
