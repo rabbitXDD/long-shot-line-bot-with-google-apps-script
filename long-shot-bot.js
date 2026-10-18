@@ -70,14 +70,14 @@ function doPost(e) {
 
     let replyText = "";
 
-    // LockService mutex — 防止並發寫入試算表造成 Race Condition
+// LockService mutex — 防止並發寫入試算表造成 Race Condition
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(5000)) {
       replyText = "⏳ 系統正忙，請 3 秒後再試。";
       tokenConsumed = true;
-      sendLineReply(replyToken, replyText);
+      sendLineReply(replyToken, replyText, userId, userMessage);
       return HtmlService.createHtmlOutput('OK');
-    }
+     }
 
     try {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -347,12 +347,21 @@ function doPost(e) {
     sendLineReply(replyToken, replyText);
     
 
-  } catch (err) {
-    console.error("=== ERROR IN doPost ===");
-    console.error(err.stack || err);
+    } catch (err) {
+     console.error("=== ERROR IN doPost ===");
+     console.error(err.stack || err);
 
-    // 只有在取得有效 replyToken 且尚未消費時，才嘗試傳送錯誤通知
-    if (replyToken && !tokenConsumed) {
+    // Task 3: Write structured error log to sheet
+     logToSheet(
+        "ERROR",
+       userId,
+       typeof userMessage !== "undefined" ? userMessage : "UNKNOWN",
+       err.message || String(err),
+       err.stack || ""
+      );
+
+      // 只有在取得有效 replyToken 且尚未消費時，才嘗試傳送錯誤通知
+     if (replyToken && !tokenConsumed) {
       try {
         tokenConsumed = true;
         sendLineReply(
@@ -365,13 +374,37 @@ function doPost(e) {
     }
   }
 
-  // 使用先前已驗證成功的回應方式
-  return HtmlService.createHtmlOutput("OK");
+   // 使用先前已驗證成功的回應方式
+   return HtmlService.createHtmlOutput("OK");
 }
 
 
+/**
+ * 寫入結構化日誌至「系統日誌」工作表（非阻斷式）
+ */
+function logToSheet(level, userId, message, errorDetails, extra) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (!ss) return;
+    const logSheet = ss.getSheetByName("系統日誌");
+    if (!logSheet) return;
+    
+    const timestamp = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd HH:mm:ss");
+    logSheet.appendRow([
+      timestamp,
+      level || "INFO",
+      userId || "SYSTEM",
+       (message || "").substring(0, 200),
+       (errorDetails || "").substring(0, 1000),
+       (extra || "").substring(0, 1000)
+    ]);
+  } catch (e) {
+   // 日誌記錄本身不可引發阻斷性錯誤
+    console.error("logToSheet failed: " + e.toString());
+  }
+}
 
-function sendLineReply(replyToken, replyText) {
+
   Logger.log("🚀 sendLineReply CALLED");
   Logger.log(`replyToken length: ${replyToken.length}`);
   Logger.log(`replyText preview: ${replyText.substring(0, 50)}`);
@@ -392,14 +425,29 @@ function sendLineReply(replyToken, replyText) {
     
   Logger.log("🌐 Sending to LINE API...");
   
-  var response;
-  try {
-     response = UrlFetchApp.fetch(url, options);
-     Logger.log(`✅ Response status: ${response.getResponseCode()}`);
-     Logger.log(`Response body: ${response.getContentText()}`);
-  } catch(fetchErr) {
-     Logger.log(`❌ fetch error: ${fetchErr.toString()}`);
-  }
+   var response;
+   try {
+      response = UrlFetchApp.fetch(url, options);
+      Logger.log(`✅ Response status: ${response.getResponseCode()}`);
+      Logger.log(`Response body: ${response.getContentText()}`);
+      
+      // Task 3: Check LINE API response and log errors
+     if (response.getResponseCode() !== 200) {
+         try {
+             logToSheet("ERROR", userId, message, 
+               `LINE API error: ${response.getResponseCode()}`, 
+               response.getContentText());
+         } catch (logErr) {
+             Logger.log(`Failed to write error log: ${logErr.toString()}`);
+         }
+      }
+    } catch(fetchErr) {
+       try {
+           logToSheet("ERROR", userId, message, "LINE API UrlFetchApp error", fetchErr.toString());
+       } catch (logErr) {
+           Logger.log(`Failed to write error log: ${logErr.toString()}`);
+       }
+    }
 }
 
 function triggerAuth() {
