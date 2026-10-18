@@ -29,10 +29,11 @@
 * **優先級**: Medium
 
 ### Task 4: 修復無效試算表公式 (對應 G4)
-* **目標**: 修正 `COUNTUNIQUEIFS` 導致的 `#NAME?` 錯誤。
+* **目標**: 移除 GAS 端動態注入錯誤公式的邏輯，改依賴試算表現有之正確靜態公式。
 * **步驟**:
-  1. 將 `COUNTUNIQUEIFS` 改寫為 `SUMPRODUCT` 或在 GAS 內以 JS `Set` 計算不重複數。
+  1. 移除 `long-shot-bot.js` 查詢排行中動態插入 `COUNTUNIQUEIFS` 的判斷與覆寫邏輯。
 * **優先級**: Medium
+* **狀態**: ✅ 已完成
 
 ### Task 5: 優化讀取路徑之鎖定機制 (對應 G5)
 * **目標**: 減少高併發下的鎖定競爭。

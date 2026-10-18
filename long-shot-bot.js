@@ -297,19 +297,6 @@ function doPost(e) {
     else if (userMessage === "查詢排行" || userMessage === "排行") {
       const sheet = spreadsheet.getSheetByName("季賽總排行榜");
       let data = sheet.getDataRange().getValues();
-      
-      // 初始化出席次數欄位 (在 E 欄和 F 欄中間，即插入到 F 欄)
-      if (data[0] && data[0][5] !== "出席次數") {
-        sheet.insertColumnAfter(5);
-        sheet.getRange(1, 6).setValue("出席次數");
-        for (let i = 2; i <= data.length; i++) {
-          if (data[i-1][1]) {
-            sheet.getRange(i, 6).setFormula(`=COUNTUNIQUEIFS(每局對戰紀錄!$B:$B, 每局對戰紀錄!$D:$D, B${i})`);
-          }
-        }
-        SpreadsheetApp.flush();
-        data = sheet.getDataRange().getValues();
-      }
 
       replyText = "🏆 【龍蝦 2026 10-12月季打 最新排行榜】 🏆\n";
       
