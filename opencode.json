@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai",
+  "model": "ollama/qwen2.5-coder:32b",
+  "instructions": [
+    "AGENTS.local.md",
+    "docs/line-spec.md"
+  ],
+  "permission": {
+    "edit": "allow",
+    "bash": { "git *": "allow", "*": "ask" }
+  }
+}
+

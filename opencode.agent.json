@@ -1,0 +1,40 @@
+{
+   "$schema": "https://opencode.ai/config.json",
+   "model": "anthropic/claude-sonnet-4-6",
+   "instructions": [
+     "AGENTS.md",
+     "docs/line-spec.md"
+   ],
+   "agent": {
+     "orchestrator": {
+       "description": "Project manager for task state machine, moves Backlog -> Todo -> In Progress",
+       "mode": "subagent"
+     },
+     "planner": {
+       "description": "Lead architect for grill-me review, validates spec.md/plan.md against line-spec constraints",
+       "mode": "subagent"
+     },
+     "executor": {
+       "description": "Senior engineer implementing code in feature branches following plan.md",
+       "mode": "primary"
+     }
+   },
+   "command": {
+     "deploy": {
+       "description": "Deploy GAS script changes locally and to GitHub",
+       "template": "python3 app_scripts.py && git add long-shot-bot.js docs/plan.md && git commit -m \"${1:-deploy}\" && git push origin main"
+     },
+     "status": {
+       "description": "Check task state and remaining work from plan.md",
+       "template": "echo 'Task status:' && cat docs/plan.md | grep -A2 '### Task' && echo '\\nGit status:' && git log --oneline -3"
+     }
+   },
+   "permission": {
+     "edit": "allow",
+     "bash": {
+       "*": "ask",
+       "git *": "allow"
+     }
+   }
+ }
+  

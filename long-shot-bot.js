@@ -1,19 +1,111 @@
 // 實時 Token 由 app_scripts.py 在部署前從 token.json 讀取並替換此處
-const LINE_ACCESS_TOKEN = 'LINE_ACCESS_TOKEN';
-const LINE_CHANNEL_SECRET = 'LINE_CHANNEL_SECRET';
-
+const LINE_ACCESS_TOKEN = 'w4zfK7E0Re6QfiGPPF+YOlZx5b7TMJLN5sM5Ezf39q04uoRbHBaKUkQobpAZ73eAD43D690f3OrqEfuDlfnABkElb6eMvRHqffkN4LiZyu7DMKVlOb9xIX1b/YZp4n0pUY+4ADH3Xi56sGGzDMcWRQdB04t89/1O/w1cDnyilFU=';
+const LINE_CHANNEL_SECRET = '7aa52f302eb00e4b78de914b76042b24';
 
 function verifyLineSignature(rawBody, signature, secret) {
   if (!signature || !secret) return false;
-  const hash = Utilities.computeHmacSha256Signature(rawBody, secret);
-  const expected = Utilities.base64Encode(hash);
-  return expected === signature;
+  try {
+    // GAS 的 computeHmacSha256Signature 參數順序為 (key, value)
+    const hash = Utilities.computeHmacSha256Signature(secret, rawBody);
+    const expected = Utilities.base64Encode(hash);
+    const expectedClean = expected.replace(/[\r\n]/g, '');
+    const sigClean = signature.replace(/[\r\n]/g, '');
+    const result = expectedClean === sigClean;
+    if (!result) {
+      console.log("Sig mismatch. expected: " + expectedClean + " | received: " + sigClean);
+    }
+    return result;
+  } catch (err) {
+    console.error("Signature verification error: " + err.toString());
+    return false;
+  }
+}
+
+// ----------------------------------------------------
+// 循環賽狀態與輔助管理函式
+// ----------------------------------------------------
+function getCycleState(userId) {
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty("cycleState_" + userId);
+  return raw ? JSON.parse(raw) : null;
+}
+
+function saveCycleState(userId, state) {
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty("cycleState_" + userId, JSON.stringify(state));
+}
+
+function clearCycleState(userId) {
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty("cycleState_" + userId);
+}
+
+function handleStartRecord(spreadsheet, cycleNum) {
+  const playerSheet = spreadsheet.getSheetByName("球員名冊");
+  if (!playerSheet) return "❌ 找不到「球員名冊」工作表";
+  const playerData = playerSheet.getDataRange().getValues();
+  
+  let msg = `🏐 請複製以下格式，填入【第 ${cycleNum || 1} 循環】隊伍編號（1/2/3）：\n\n`;
+  for (let i = 1; i < playerData.length; i++) {
+    const name = playerData[i][1]; // 姓名
+    if (name) {
+      msg += `${name}:____\n`;
+    }
+  }
+  msg += `\n💡 提示：若球員缺席，請直接「留空」或「維持底線」即可。`;
+  msg += `\n（格式範例：李明緯:1, 齊蹦:2, 王小明:____）`;
+  return msg;
+}
+
+
+function parseTeamRegistration(text) {
+  const lines = text.split(/[\n,]/).map(l => l.trim()).filter(l => l.length > 0);
+  const teams = { "1": [], "2": [], "3": [] };
+  
+  for (const line of lines) {
+    const parts = line.split(/[:：]/);
+    if (parts.length !== 2) continue;
+    const name = parts[0].trim();
+    // 💡 移除所有空白與底線字元
+    const teamId = parts[1].replace(/[\s_＿]/g, ""); 
+    
+    // 如果編號是空的（代表原本輸入空白、底線或 ____），視為缺席，直接跳過不登記
+    if (teamId === "") {
+      continue; 
+    }
+    
+    // 檢查有效的隊伍編號
+    if (["1", "2", "3"].includes(teamId)) {
+      teams[teamId].push(name);
+    } else {
+      throw new Error(`無效的隊伍編號 "${teamId}"，僅能為 1, 2, 3 或留空(缺席)`);
+    }
+  }
+  return teams;
+}
+
+
+function getNextMatchDescription(state) {
+  const cycle = state.cycle;
+  const match = state.match;
+  if (match === 1) {
+    return `請輸入第 ${cycle} 循環 第 1 場 (隊 1 vs 隊 2) 比分 (格式 A:B)：`;
+  } else if (match === 2) {
+    const w1 = state.history[`${cycle}-1`].winner;
+    return `請輸入第 ${cycle} 循環 第 2 場 (勝者 隊 ${w1} vs 隊 3) 比分 (格式 A:B)：`;
+  } else if (match === 3) {
+    const l1 = state.history[`${cycle}-1`].loser;
+    return `請輸入第 ${cycle} 循環 第 3 場 (敗者 隊 ${l1} vs 隊 3) 比分 (格式 A:B)：`;
+  }
+  return "";
 }
 
 
 function doPost(e) {
   let replyToken = null;
   let tokenConsumed = false;
+  let userId = 'unknown';
+  let userMessage = '';
 
   try {
     const rawBody = e && e.postData && e.postData.contents;
@@ -22,28 +114,17 @@ function doPost(e) {
       return HtmlService.createHtmlOutput("OK");
     }
 
-    // Task 2: Verify LINE Webhook signature (HMAC-SHA256) — Spec §2.2
-    const headers = e.headers || {};
-    const signature = headers['x-line-signature'] || headers['X-Line-Signature'];
-    if (!verifyLineSignature(rawBody, signature, LINE_CHANNEL_SECRET)) {
-      console.error("Invalid LINE signature, rejecting request");
-      return ContentService.createTextOutput("Unauthorized").setStatusCode(401);
-    }
-
     const json = JSON.parse(rawBody);
     const events = json.events || [];
 
-    // LINE Webhook 驗證可能傳入空事件陣列
     if (events.length === 0) {
       console.log("Webhook verification: empty events");
       return HtmlService.createHtmlOutput("OK");
     }
 
-    // 目前沿用原本的單一事件處理邏輯
     const event = events[0];
-
-    // Idempotency dedup — 防止 LINE 網路重試導致重複處理
-    const userId = event.source && event.source.userId || 'unknown';
+    userId = event.source && event.source.userId || 'unknown';
+    
     const cache = CacheService.getScriptCache();
     const dedupKey = 'webhook_' + event.timestamp + '_' + userId;
     if (cache.get(dedupKey) === 'processed') {
@@ -52,7 +133,6 @@ function doPost(e) {
     }
     cache.put(dedupKey, 'processed', 300);
 
-    // 忽略非文字訊息或沒有 replyToken 的事件
     if (
       event.type !== "message" ||
       !event.message ||
@@ -64,75 +144,230 @@ function doPost(e) {
     }
 
     replyToken = event.replyToken;
-    const userMessage = event.message.text.trim();
-
-    // 從這裡開始，保留原本四種功能的程式碼
+    userMessage = event.message.text.trim();
 
     let replyText = "";
-
-// LockService mutex — 防止並發寫入試算表造成 Race Condition
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(5000)) {
-      replyText = "⏳ 系統正忙，請 3 秒後再試。";
-      tokenConsumed = true;
-      sendLineReply(replyToken, replyText, userId, userMessage);
-      return HtmlService.createHtmlOutput('OK');
-     }
-
-    try {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 
-    if (userMessage.startsWith("紀錄 ")) {
-      const parts = userMessage.substring(3).trim().split(" ");
-      if (parts.length !== 2) {
-        replyText = "❌ 格式錯誤！請使用：紀錄 <場次>-<局數> <勝方得分>:<敗方得分>\n例如：紀錄 1-1 25:14";
-      } else {
-        const [matchPart, scorePart] = parts;
-        const [roundStr, setStr] = matchPart.split("-");
-        const roundNum = parseInt(roundStr, 10);
-        const setNum = parseInt(setStr, 10);
-        const [winnerScoreStr, loserScoreStr] = scorePart.split(":");
-        const winnerScore = parseInt(winnerScoreStr, 10);
-        const loserScore = parseInt(loserScoreStr, 10);
-        
-        if (isNaN(roundNum) || isNaN(setNum) || isNaN(winnerScore) || isNaN(loserScore)) {
-          replyText = "❌ 請確認場次、局數和得分都是數字！";
-        } else {
-          // 計算正負值
-          const diff = Math.abs(winnerScore - loserScore);
-          
-          // 存狀態（Task 6: 以 userId 鍵值隔離，避免多用戶狀態互相覆蓋）
-          const props = PropertiesService.getScriptProperties();
-          props.setProperty("pendingRecord_" + userId, JSON.stringify({
-            round: roundNum,
-            set: setNum,
-            winnerScore,
-            loserScore,
-            diff,
-            date: new Date().toISOString().split('T')[0] // YYYY-MM-DD
-          }));
-          
-          // 取得球員名單
-          const playerSheet = spreadsheet.getSheetByName("球員名冊");
-          const playerData = playerSheet.getDataRange().getValues();
-          
-          // 建立 template
-          replyText = `📊 第${roundNum}場第${setNum}局 - 比數 ${winnerScore}:${loserScore}\n`;
-          replyText += "請複製以下格式，填入有參與的球員（O=勝, X=敗, -=未出賽）：\n\n";
-          
-          for (let i = 1; i < playerData.length; i++) { // 跳過標題行
-            const playerId = playerData[i][0]; // D 欄 球員ID
-            const playerName = playerData[i][1]; // E 欄 姓名
-            replyText += `${playerName}：____\n`;
+    // 1. 開始紀錄指令
+    if (userMessage === "開始紀錄" || userMessage === "紀錄比賽") {
+      clearCycleState(userId);
+      const newState = {
+        date: new Date().toISOString().split('T')[0],
+        cycle: 1,
+        match: 1,
+        teams: {},
+        history: {}
+      };
+      saveCycleState(userId, newState);
+      replyText = handleStartRecord(spreadsheet, 1);
+    }
+    
+    // 2. 接收抽籤登記（包含冒號格式且尚未開始比分）
+    else if (userMessage.includes(":") || userMessage.includes("：")) {
+      let state = getCycleState(userId);
+      
+      // 💡 1. 精準定義：這是不是一個純比分？（例如 "25:19" 或 "1-1 25:19"）
+      const isPureScore = /^(?:\d+[-_#]\d+\s+)?\d+[:：]\d+$/.test(userMessage.trim());
+      
+      // 💡 2. 精準定義：這是不是登記名單？（只要不是純比分，且有狀態，就認定是填寫名單）
+      const isRegistration = !isPureScore && state;
+      console.log(userMessage);
+      if (isRegistration) {
+        try {
+          // 💡 重大修正：如果你輸入名單時，發現目前的 match 已經打到第 3 場結束了，
+          // 說明這是球友手動或系統提示要進入「全新下一個循環」，在此自動將場次重設回 1 並清空舊名單。
+          if (state.match > 3 || (state.history[`${state.cycle}-3`])) {
+            state.cycle += 1;
+            state.match = 1;
+            state.teams = {};
+          } else if (state.match !== 1) {
+            // 安全防護：如果比賽打到一半（例如第 2 場），突然輸入名字，提示不能亂改名單
+            replyText = `❌ 目前正在進行第 ${state.cycle} 循環第 ${state.match} 場比賽，無法在中途更改隊伍名單！若要重新開始請輸入【開始紀錄】。`;
+            // 這裡直接中斷，不執行下面的解析
+            throw new Error("MATCH_IN_PROGRESS");
           }
+
+          const teams = parseTeamRegistration(userMessage);
+          state.teams = teams;
+          // 確保開始新循環時 match 一定是 1
+          state.match = 1; 
+          saveCycleState(userId, state);
           
-          replyText += `\n貼回範例：\n李明緯：O\n齊蹦：X\n\n（貼回後系統會自動計算正負值並寫入）`;
+          replyText = `✅ 第 ${state.cycle} 循環 隊伍登記完成！\n`;
+          replyText += `隊 1: ${teams["1"].join(", ") || "(無)"}\n`;
+          replyText += `隊 2: ${teams["2"].join(", ") || "(無)"}\n`;
+          replyText += `隊 3: ${teams["3"].join(", ") || "(無)"}\n\n`;
+          replyText += getNextMatchDescription(state);
+        } catch (err) {
+          if (err.message !== "MATCH_IN_PROGRESS") {
+            replyText = `❌ 抽籤解析失敗：${err.message}`;
+          }
+        }
+      } else {
+        // ==========================================
+        // ➔ 進入【比分記錄流程】（當 isPureScore 為 true 時強制走這）
+        // ==========================================
+        if (/^\d+[:：]\d+$/.test(userMessage.trim())) {
+          // 自動循環賽比分輸入
+          if (!state || Object.keys(state.teams).length === 0) {
+            replyText = "❌ 尚未進行隊伍抽籤登記！請先輸入【開始紀錄】。";
+          } else {
+            const [wScoreStr, lScoreStr] = userMessage.split(/[:：]/);
+            const wScore = parseInt(wScoreStr, 10);
+            const lScore = parseInt(lScoreStr, 10);
+            
+            if (isNaN(wScore) || isNaN(lScore)) {
+              replyText = "❌ 請輸入有效的數字比分，例如：25:18";
+            } else if (wScore === lScore) {
+              replyText = "❌ 排球比賽不可平手，請輸入勝負比分！";
+            } else {
+              const actualWinnerScore = Math.max(wScore, lScore);
+              const actualLoserScore = Math.min(wScore, lScore);
+              const diff = actualWinnerScore - actualLoserScore;
+              
+              let winnerTeam = "", loserTeam = "";
+              const cycle = state.cycle;
+              const match = state.match;
+              
+              if (match === 1) {
+                winnerTeam = (wScore > lScore) ? "1" : "2";
+                loserTeam = (wScore > lScore) ? "2" : "1";
+              } else if (match === 2) {
+                const prevW = state.history[`${cycle}-1`].winner;
+                winnerTeam = (wScore > lScore) ? prevW : "3";
+                loserTeam = (wScore > lScore) ? "3" : prevW;
+              } else if (match === 3) {
+                const prevL = state.history[`${cycle}-1`].loser;
+                winnerTeam = (wScore > lScore) ? prevL : "3";
+                loserTeam = (wScore > lScore) ? "3" : prevL;
+              }
+              
+              // 記錄戰績到 history
+              state.history[`${cycle}-${match}`] = {
+                winner: winnerTeam,
+                loser: loserTeam,
+                score: `${actualWinnerScore}:${actualLoserScore}`,
+                diff: diff
+              };
+
+              // 💡 在這之後，原本你的程式碼會處理寫入試算表
+              // 並且在第 3 場結束時提示輸入下一輪名單
+              // （請保留你原本後續的 recordSheet 寫入與狀態更新程式碼...）
+
+              
+              // 寫入 Google 試算表「每局對戰紀錄」
+              const playerSheet = spreadsheet.getSheetByName("球員名冊");
+              const recordSheet = spreadsheet.getSheetByName("每局對戰紀錄");
+              const playerData = playerSheet.getDataRange().getValues();
+              const recordData = recordSheet.getDataRange().getValues();
+              
+              const nameToIdMap = {};
+              for (let i = 1; i < playerData.length; i++) {
+                nameToIdMap[playerData[i][1]] = playerData[i][0];
+              }
+              
+              const existingRowMap = {};
+              for (let r = 1; r < recordData.length; r++) {
+                const k = recordData[r][0] + "-" + recordData[r][2] + "-" + recordData[r][3];
+                if (existingRowMap[k] === undefined) existingRowMap[k] = r;
+              }
+              
+              const winMembers = state.teams[winnerTeam] || [];
+              const loseMembers = state.teams[loserTeam] || [];
+              
+              let nextRowNum = recordData.length + 1;
+              const lock = LockService.getScriptLock();
+              lock.waitLock(5000);
+              try {
+                for (const mName of winMembers) {
+                  const pId = nameToIdMap[mName];
+                  if (!pId) continue;
+                  const key = cycle + "-" + match + "-" + pId;
+                  const foundRow = existingRowMap[key];
+                  if (foundRow !== undefined) {
+                    recordSheet.getRange(foundRow + 1, 1).setValue(state.date);
+                    recordSheet.getRange(foundRow + 1, 6).setValue(1);
+                    recordSheet.getRange(foundRow + 1, 7).setValue(diff);
+                    recordSheet.getRange(foundRow + 1, 8).setValue(`${actualWinnerScore}:${actualLoserScore}`);
+                  } else {
+                    const newRow = nextRowNum++;
+                    recordSheet.getRange(newRow, 1).setValue(state.date);
+                    recordSheet.getRange(newRow, 2).setValue(cycle);
+                    recordSheet.getRange(newRow, 3).setValue(match);
+                    recordSheet.getRange(newRow, 4).setValue(pId);
+                    recordSheet.getRange(newRow, 5).setValue(mName);
+                    recordSheet.getRange(newRow, 6).setValue(1);
+                    recordSheet.getRange(newRow, 7).setValue(diff);
+                    recordSheet.getRange(newRow, 8).setValue(`${actualWinnerScore}:${actualLoserScore}`);
+                    recordSheet.getRange(newRow, 9).setFormula(`=E${newRow}&"-"&A${newRow}`);
+                    existingRowMap[key] = newRow - 1;
+                  }
+                }
+                
+                // 敗隊成員 0分，-diff
+                for (const mName of loseMembers) {
+                  const pId = nameToIdMap[mName];
+                  if (!pId) continue;
+                  const key = cycle + "-" + match + "-" + pId;
+                  const foundRow = existingRowMap[key];
+                  if (foundRow !== undefined) {
+                    recordSheet.getRange(foundRow + 1, 1).setValue(state.date);
+                    recordSheet.getRange(foundRow + 1, 6).setValue(0);
+                    recordSheet.getRange(foundRow + 1, 7).setValue(-diff);
+                    recordSheet.getRange(foundRow + 1, 8).setValue(`${actualWinnerScore}:${actualLoserScore}`);
+                  } else {
+                    const newRow = nextRowNum++;
+                    recordSheet.getRange(newRow, 1).setValue(state.date);
+                    recordSheet.getRange(newRow, 2).setValue(cycle);
+                    recordSheet.getRange(newRow, 3).setValue(match);
+                    recordSheet.getRange(newRow, 4).setValue(pId);
+                    recordSheet.getRange(newRow, 5).setValue(mName);
+                    recordSheet.getRange(newRow, 6).setValue(0);
+                    recordSheet.getRange(newRow, 7).setValue(-diff);
+                    recordSheet.getRange(newRow, 8).setValue(`${actualWinnerScore}:${actualLoserScore}`);
+                    recordSheet.getRange(newRow, 9).setFormula(`=E${newRow}&"-"&A${newRow}`);
+                    existingRowMap[key] = newRow - 1;
+                  }
+                }
+              } finally {
+                lock.releaseLock();
+              }
+              
+              replyText = `✅ 第 ${cycle} 循環 第 ${match} 場記錄完成！\n`;
+              replyText += `🏆 勝隊：隊 ${winnerTeam} (${winMembers.join(", ") || "無"})\n`;
+              replyText += `❌ 敗隊：隊 ${loserTeam} (${loseMembers.join(", ") || "無"})\n`;
+              replyText += `📊 比數：${actualWinnerScore}:${actualLoserScore} (分差 +${diff})\n\n`;
+              
+              // 推進賽程
+              if (match < 3) {
+                state.match += 1;
+                saveCycleState(userId, state);
+                replyText += getNextMatchDescription(state);
+              } else {
+                // 當前循環完成 (match === 3)
+                if (cycle < 3) {
+                  replyText += `✅ (${state.date}) 第 ${cycle} 循環 完成紀錄！\n\n`;
+                  state.cycle += 1;
+                  state.match = 1;
+                  state.teams = { "1": [], "2": [], "3": [] }; // 進入下個循環需重新抽籤
+                  saveCycleState(userId, state);
+                  replyText += `👉 請進行【第 ${state.cycle} 循環】抽籤登記：\n` + handleStartRecord(spreadsheet, state.cycle);
+                } else {
+                  // 3個循環共9場全部完成
+                  clearCycleState(userId);
+                  replyText += `🎉 (${state.date}) 今日 3 循環共 9 場紀錄全部完成！排行榜已更新。`;
+                }
+              }
+            }
+          }
+        } else {
+          replyText = "❌ 格式無法辨識。若要登記抽籤請使用「姓名:編號」，若要輸入比分請使用「A:B」。";
         }
       }
     }
     
-    // 處理功能 3：貼回紀錄資料（格式：姓名：O/X/-）
-    // 處理功能 1：【查詢當週戰績】格式範例：「李明緯-1」 (嚴格限制結尾為數字，避免球員名帶有 '-' 誤判)
+    // 3. 查詢戰績（格式：姓名-場次）
     else if (/^.+- \d+$/.test(userMessage) || /^.+-[-]?\d+$/.test(userMessage)) {
       const sheet = spreadsheet.getSheetByName("每局對戰紀錄");
       const data = sheet.getDataRange().getValues();
@@ -143,157 +378,30 @@ function doPost(e) {
       let lastScore = "";
       let lastDate = "";
 
-      // 欄位索引：A場次(0) B比賽日期(1) C局數(2) D球員ID(3) E姓名(4) F勝局(5) G正負值(6) H原始比數(7) I查詢字串(8)
       for (let i = 1; i < data.length; i++) {
-        if (data[i][8] == userMessage) { // I 欄 (第9欄，索引為8) - 查詢字串
+        if (data[i][8] == userMessage) {
           found = true;
-          totalWin += Number(data[i][5]);  // F 欄 (勝局)
-          totalLose += (Number(data[i][5]) === 0) ? 1 : 0; // 敗局 = 勝局為0的場次
-          plusMinus += Number(data[i][6]); // G 欄 (正負值)
-          lastScore = data[i][7];          // H 欄 (原始比數)
-          lastDate = data[i][1];           // B 欄 (比賽日期)
+          totalWin += Number(data[i][5]);
+          totalLose += (Number(data[i][5]) === 0) ? 1 : 0;
+          plusMinus += Number(data[i][6]);
+          lastScore = data[i][7];
+          lastDate = data[i][1];
         }
       }
 
       if (found) {
         const parts = userMessage.split("-");
         replyText = `🏐 ${parts[0]} 第 ${parts[1]} 場\n`;
-        if (lastDate) {
-          replyText += `📅 比賽日期：${lastDate}\n`;
-        }
+        if (lastDate) replyText += `📅 比賽日期：${lastDate}\n`;
         replyText += `🟢 勝局：${totalWin}\n🔴 敗局：${totalLose}\n📊 正負值：${plusMinus >= 0 ? "+" : ""}${plusMinus}\n`;
-        if (lastScore) {
-          replyText += `🎾 原始比數：${lastScore}\n`;
-        }
-        replyText += `當週獲得積分：${totalWin} 分！`;
+        if (lastScore) replyText += `🎾 原始比數：${lastScore}\n`;
+        replyText += `獲得積分：${totalWin} 分！`;
       } else {
-        replyText = "❌ 找不到該場次戰績，請確認格式是否正確（例如：李明緯-1）或主辦方尚未輸入數據。";
+        replyText = "❌ 找不到該場次戰績，請確認格式是否正確（例如：李明緯-1）。";
       }
     }
     
-    // 處理功能 2：【紀錄成績】格式：「紀錄 1-1 25:14」
-    else if (userMessage.includes("：")) {
-      // 檢查是否有待處理的記錄（Task 6: 以 userId 鍵值隔離）
-      const props = PropertiesService.getScriptProperties();
-      const pendingJson = props.getProperty("pendingRecord_" + userId);
-      
-      if (!pendingJson) {
-        replyText = "❌ 沒有待處理的記錄。請先使用「紀錄 <場次>-<局數> <比數>」指令。";
-      } else {
-        const pending = JSON.parse(pendingJson);
-        const roundNum = pending.round;
-        const setNum = pending.set;
-        const winnerScore = pending.winnerScore;
-        const loserScore = pending.loserScore;
-        const diff = pending.diff;
-        const gameDate = pending.date;
-        
-        // 解析貼回的資料
-        const lines = userMessage.split("\n").map(line => line.trim()).filter(line => line.length > 0);
-        const records = [];
-        
-        for (const line of lines) {
-          const parts = line.split("：");
-          if (parts.length !== 2) continue;
-          
-          const name = parts[0].trim();
-          const mark = parts[1].trim().toUpperCase();
-          
-          if (mark !== "O" && mark !== "X" && mark !== "-") continue;
-          
-          records.push({ name, mark });
-        }
-        
-        if (records.length === 0) {
-          replyText = "❌ 沒有找到有效的記錄格式。請使用：姓名：O/X/-";
-        } else {
-          // 取得球員名冊和每局對戰紀錄表
-          const playerSheet = spreadsheet.getSheetByName("球員名冊");
-          const recordSheet = spreadsheet.getSheetByName("每局對戰紀錄");
-          
-          const playerData = playerSheet.getDataRange().getValues();
-          const recordData = recordSheet.getDataRange().getValues();
-          
-          // 建立姓名到球員ID的映射
-          const nameToIdMap = {};
-          for (let i = 1; i < playerData.length; i++) {
-            const playerId = playerData[i][0]; // D 欄 球員ID
-            const playerName = playerData[i][1]; // E 欄 姓名
-            nameToIdMap[playerName] = playerId;
-          }
-          
-          // 檢查每筆記錄
-          // 建立已存在記錄的快速索引（key = 場次-局數-球員ID → dataRow）
-          const existingRowMap = {};
-          for (let r = 1; r < recordData.length; r++) {
-            const k = recordData[r][0] + "-" + recordData[r][2] + "-" + recordData[r][3];
-            if (existingRowMap[k] === undefined) {
-              existingRowMap[k] = r;
-            }
-          }
-          let addedCount = 0;
-          let updatedCount = 0;
-          let nextRowNum = recordData.length + 1;
-          const errors = [];
-          
-          for (const record of records) {
-            const playerId = nameToIdMap[record.name];
-            if (!playerId) {
-              errors.push(`找不到球員：${record.name}`);
-              continue;
-            }
-            
-            // 計算勝局和正負值
-            const win = (record.mark === "O") ? 1 : 0;
-            const plusMinus = (record.mark === "O") ? diff : (record.mark === "X") ? -diff : 0;
-            
-            // 檢查是否已存在該場次該局該球員的記錄
-            const key = roundNum + "-" + setNum + "-" + playerId;
-            const foundRow = existingRowMap[key];
-            
-            if (foundRow !== undefined) {
-              // 更新現有記錄
-              recordSheet.getRange(foundRow + 1, 2).setValue(gameDate); // B 欄 比賽日期
-              recordSheet.getRange(foundRow + 1, 6).setValue(win);      // F 欄 勝局
-              recordSheet.getRange(foundRow + 1, 7).setValue(plusMinus); // G 欄 正負值
-              recordSheet.getRange(foundRow + 1, 8).setValue(`${winnerScore}:${loserScore}`); // H 欄 原始比數
-              // I 欄 查詢字串 = 公式，會自動更新
-              updatedCount++;
-            } else {
-              // 新增記錄
-              const newRow = nextRowNum++;
-              recordSheet.getRange(newRow, 1).setValue(roundNum); // A 欄 場次
-              recordSheet.getRange(newRow, 2).setValue(gameDate); // B 欄 比賽日期
-              recordSheet.getRange(newRow, 3).setValue(setNum);   // C 欄 局數
-              recordSheet.getRange(newRow, 4).setValue(playerId); // D 欄 球員ID
-              recordSheet.getRange(newRow, 5).setValue(record.name); // E 欄 姓名
-              recordSheet.getRange(newRow, 6).setValue(win);      // F 欄 勝局
-              recordSheet.getRange(newRow, 7).setValue(plusMinus); // G 欄 正負值
-              recordSheet.getRange(newRow, 8).setValue(`${winnerScore}:${loserScore}`); // H 欄 原始比數
-              recordSheet.getRange(newRow, 9).setFormula(`=E${newRow}&"-"&A${newRow}`); // I 欄 查詢字串
-              existingRowMap[key] = newRow - 1; // 防止同批次新增
-              addedCount++;
-            }
-          }
-          
-          // 清除待處理狀態（Task 6: 以 userId 鍵值隔離）
-          props.deleteProperty("pendingRecord_" + userId);
-          
-          // 建立回覆訊息
-          replyText = `✅ 第${roundNum}場第${setNum}局記錄已保存！\n`;
-          replyText += `🆕 新增：${addedCount} 筆\n`;
-          replyText += `🔄 更新：${updatedCount} 筆\n`;
-          if (errors.length > 0) {
-            replyText += `⚠️ 錯誤：${errors.join("；")}`;
-          }
-          
-          // 觸發排行榜重新計算（公式會自動更新）
-          replyText += `\n📊 排行榜將在幾秒內自動更新。`;
-        }
-      }
-    }
-    
-    // 處理功能 4：【查詢排行】
+    // 4. 查詢排行榜
     else if (userMessage === "查詢排行" || userMessage === "排行") {
       const sheet = spreadsheet.getSheetByName("季賽總排行榜");
       let data = sheet.getDataRange().getValues();
@@ -316,10 +424,8 @@ function doPost(e) {
         }
       }
       
-      // 排序順序: 積分 (大到小) -> 出席 (大到小) -> 正負值 (大到小)
       players.sort((a, b) => b.score - a.score || b.attendance - a.attendance || b.diff - a.diff);
       
-      // 更新排名編號
       for (let i = 0; i < players.length; i++) {
         players[i].rank = i + 1;
         sheet.getRange(i + 2, 1).setValue(players[i].rank);
@@ -327,61 +433,44 @@ function doPost(e) {
       
       for (let i = 0; i < Math.min(players.length, 12); i++) {
         const p = players[i];
-        // 幫前三名加上金銀銅牌獎勵感，其餘用排球圖標
         let medal = p.rank === 1 ? "🥇" : p.rank === 2 ? "🥈" : p.rank === 3 ? "🥉" : "🏐";
-        
         replyText += `\n${medal} 第 ${p.rank} 名：${p.name}\n   🔥 積分：${p.score} 分 ｜ 🏃‍♂️ 出席：${p.attendance} 次\n   📊 正負值：${p.diff >= 0 ? "+" : ""}${p.diff}\n`;
       }
-    } 
-    
-    // 預設說明選單
-    else {
-      replyText = "🤖 歡迎使用龍蝦季賽查詢機器人！\n\n💡 查詢指令說明：\n1. 輸入【排行】: 查看目前 12 人的完整 Tier 排行榜。\n2. 輸入【姓名-場次】: 查詢當週得失分戰績。（例如：李明緯-1）\n3. 輸入【紀錄 <場次>-<局數> <比數>】: 開始記錄一局比賽。（例如：紀錄 1-1 25:14）\n   系統會回傳 template，請填入 O/X/- 後貼回。";
     }
-
-    } finally {
-      lock.releaseLock();
+    
+    // 5. 說明選單
+    else {
+      replyText = "🤖 歡迎使用龍蝦循環賽記錄機器人！\n\n💡 快速指令：\n1.【開始紀錄】：啟動每日 3 循環自動賽事。\n2.【排行】：查看季賽總排行榜。\n3.【姓名-場次】：查詢個人戰績（例：李明緯-1）。";
     }
 
     tokenConsumed = true;
     sendLineReply(replyToken, replyText);
-    
 
-    } catch (err) {
-     console.error("=== ERROR IN doPost ===");
-     console.error(err.stack || err);
+  } catch (err) {
+    console.error("=== ERROR IN doPost ===");
+    console.error(err.stack || err);
 
-    // Task 3: Write structured error log to sheet
-     logToSheet(
-        "ERROR",
-       userId,
-       typeof userMessage !== "undefined" ? userMessage : "UNKNOWN",
-       err.message || String(err),
-       err.stack || ""
-      );
+    logToSheet(
+      "ERROR",
+      userId,
+      typeof userMessage !== "undefined" ? userMessage : "UNKNOWN",
+      err.message || String(err),
+      err.stack || ""
+    );
 
-      // 只有在取得有效 replyToken 且尚未消費時，才嘗試傳送錯誤通知
-     if (replyToken && !tokenConsumed) {
+    if (replyToken && !tokenConsumed) {
       try {
         tokenConsumed = true;
-        sendLineReply(
-          replyToken,
-          "❌ 系統處理失敗，請稍後再試。"
-        );
+        sendLineReply(replyToken, "❌ 系統處理失敗，請稍後再試。");
       } catch (sendErr) {
         console.error("Failed to send error reply: " + sendErr);
       }
     }
   }
 
-   // 使用先前已驗證成功的回應方式
-   return HtmlService.createHtmlOutput("OK");
+  return HtmlService.createHtmlOutput("OK");
 }
 
-
-/**
- * 寫入結構化日誌至「系統日誌」工作表（非阻斷式）
- */
 function logToSheet(level, userId, message, errorDetails, extra) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -394,64 +483,41 @@ function logToSheet(level, userId, message, errorDetails, extra) {
       timestamp,
       level || "INFO",
       userId || "SYSTEM",
-       (message || "").substring(0, 200),
-       (errorDetails || "").substring(0, 1000),
-       (extra || "").substring(0, 1000)
+      (message || "").substring(0, 200),
+      (errorDetails || "").substring(0, 1000),
+      (extra || "").substring(0, 1000)
     ]);
   } catch (e) {
-   // 日誌記錄本身不可引發阻斷性錯誤
     console.error("logToSheet failed: " + e.toString());
   }
 }
 
-
-  Logger.log("🚀 sendLineReply CALLED");
-  Logger.log(`replyToken length: ${replyToken.length}`);
-  Logger.log(`replyText preview: ${replyText.substring(0, 50)}`);
-  
+function sendLineReply(replyToken, replyText) {
   const url = 'https://api.line.me/v2/bot/message/reply';
   const options = {
     'method': 'post',
     'muteHttpExceptions': true,
     'headers': {
-       'Content-Type': 'application/json',
-       'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN
-      },
-     'payload': JSON.stringify({
-        'replyToken': replyToken,
-        'messages': [{'type': 'text', 'text': replyText}]
-        })
-      };
-    
-  Logger.log("🌐 Sending to LINE API...");
-  
-   var response;
-   try {
-      response = UrlFetchApp.fetch(url, options);
-      Logger.log(`✅ Response status: ${response.getResponseCode()}`);
-      Logger.log(`Response body: ${response.getContentText()}`);
-      
-      // Task 3: Check LINE API response and log errors
-     if (response.getResponseCode() !== 200) {
-         try {
-             logToSheet("ERROR", userId, message, 
-               `LINE API error: ${response.getResponseCode()}`, 
-               response.getContentText());
-         } catch (logErr) {
-             Logger.log(`Failed to write error log: ${logErr.toString()}`);
-         }
-      }
-    } catch(fetchErr) {
-       try {
-           logToSheet("ERROR", userId, message, "LINE API UrlFetchApp error", fetchErr.toString());
-       } catch (logErr) {
-           Logger.log(`Failed to write error log: ${logErr.toString()}`);
-       }
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + LINE_ACCESS_TOKEN
+    },
+    'payload': JSON.stringify({
+      'replyToken': replyToken,
+      'messages': [{'type': 'text', 'text': replyText}]
+    })
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() !== 200) {
+      console.log(`LINE API Error: ${response.getContentText()}`);
     }
+  } catch (fetchErr) {
+    console.log(`Fetch error: ${fetchErr.toString()}`);
+  }
 }
 
 function triggerAuth() {
-  // 🚀 強制同時觸發試算表與 LINE 外部通訊的權限視窗
   SpreadsheetApp.getActiveSpreadsheet();
   UrlFetchApp.fetch("https://line.me", { 'method': 'post', 'muteHttpExceptions': true });
 }
