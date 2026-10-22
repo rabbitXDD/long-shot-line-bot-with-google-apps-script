@@ -367,7 +367,50 @@ function doPost(e) {
       }
     }
     
-    // 3. 查詢戰績（格式：姓名-場次）
+    // 3. 取消成員單局紀錄（格式：取消紀錄:姓名:循環-場次）
+    else if (userMessage.startsWith("取消紀錄:")) {
+      const parts = userMessage.split(":");
+      if (parts.length < 3) {
+        replyText = "❌ 格式錯誤！請使用「取消紀錄:姓名:循環-場次」，例如：取消紀錄:李明緯:1-2";
+      } else {
+        const name = parts[1];
+        const matchInfo = parts[2].split("-");
+        if (matchInfo.length < 2) {
+          replyText = "❌ 格式錯誤！請使用「取消紀錄:姓名:循環-場次」，例如：取消紀錄:李明緯:1-2";
+        } else {
+          const cycle = matchInfo[0];
+          const match = matchInfo[1];
+          const sheet = spreadsheet.getSheetByName("每局對戰紀錄");
+          const data = sheet.getDataRange().getValues();
+          let foundRow = -1;
+
+          for (let i = 1; i < data.length; i++) {
+            // data[i][4] 是姓名, data[i][1] 是循環, data[i][2] 是場次
+            if (data[i][4] === name && String(data[i][1]) === cycle && String(data[i][2]) === match) {
+              foundRow = i + 1;
+              break;
+            }
+          }
+
+          if (foundRow !== -1) {
+            const lock = LockService.getScriptLock();
+            lock.waitLock(5000);
+            try {
+              sheet.getRange(foundRow, 6).setValue(0);      // 積分歸零
+              sheet.getRange(foundRow, 7).setValue(0);      // 正負值歸零
+              sheet.getRange(foundRow, 8).setValue("已取消"); // 比分標註
+              replyText = `✅ 已成功取消 ${name} 在第 ${cycle} 循環 第 ${match} 場的個人紀錄！`;
+            } finally {
+              lock.releaseLock();
+            }
+          } else {
+            replyText = `❌ 找不到 ${name} 在第 ${cycle} 循環 第 ${match} 場的紀錄，請確認資料是否正確。`;
+          }
+        }
+      }
+    }
+    
+    // 4. 查詢戰績（格式：姓名-場次）
     else if (/^.+- \d+$/.test(userMessage) || /^.+-[-]?\d+$/.test(userMessage)) {
       const sheet = spreadsheet.getSheetByName("每局對戰紀錄");
       const data = sheet.getDataRange().getValues();
